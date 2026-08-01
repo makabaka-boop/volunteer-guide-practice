@@ -1,8 +1,10 @@
-import type { PracticeCard, FilterCriteria, GoalStatus, FamiliarityLevel } from './types';
+import type { PracticeCard, FilterCriteria, GoalStatus, FamiliarityLevel, TrainingRoute, RouteRunRecord } from './types';
 import { GOAL_NEAR_DUE_DAYS } from './types';
 
 const STORAGE_KEY = 'volunteer_guide_script_segments_v2';
 const SELECTED_KEY = 'volunteer_guide_script_selected_ids_v2';
+const ROUTES_KEY = 'volunteer_guide_training_routes_v1';
+const ROUTE_RUNS_KEY = 'volunteer_guide_route_runs_v1';
 const LEGACY_STORAGE_KEY = 'volunteer_guide_practice_cards_v1';
 const LEGACY_SELECTED_KEY = 'volunteer_guide_selected_ids_v1';
 
@@ -43,6 +45,100 @@ export function loadSelectedIds(): Set<string> {
 
 export function saveSelectedIds(ids: Set<string>): void {
   getStorage().setItem(SELECTED_KEY, JSON.stringify(Array.from(ids)));
+}
+
+export function hasStoredRoutes(): boolean {
+  return getStorage().getItem(ROUTES_KEY) !== null;
+}
+
+export function loadRoutes(): TrainingRoute[] {
+  try {
+    const raw = getStorage().getItem(ROUTES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as TrainingRoute[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((route) => ({
+      ...route,
+      description: route.description || '',
+      stepIds: Array.isArray(route.stepIds) ? route.stepIds : []
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function saveRoutes(routes: TrainingRoute[]): void {
+  getStorage().setItem(ROUTES_KEY, JSON.stringify(routes));
+}
+
+export function loadRouteRuns(): RouteRunRecord[] {
+  try {
+    const raw = getStorage().getItem(ROUTE_RUNS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as RouteRunRecord[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveRouteRuns(runs: RouteRunRecord[]): void {
+  getStorage().setItem(ROUTE_RUNS_KEY, JSON.stringify(runs));
+}
+
+export function createEmptyRoute(): TrainingRoute {
+  const now = Date.now();
+  return {
+    id: generateId(),
+    name: '',
+    description: '',
+    stepIds: [],
+    targetDate: now + 86400000 * 7,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+export function cloneRoute(route: TrainingRoute): TrainingRoute {
+  const now = Date.now();
+  return {
+    ...route,
+    id: generateId(),
+    name: route.name + '（副本）',
+    stepIds: [...route.stepIds],
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: undefined,
+    lastRunAt: undefined
+  };
+}
+
+export function getDefaultRoutes(cards: PracticeCard[]): TrainingRoute[] {
+  if (cards.length === 0) return [];
+  const now = Date.now();
+  const DAY = 86400000;
+  const orderedIds = cards.map((c) => c.id);
+  return [
+    {
+      id: generateId(),
+      name: '标准全程导览路线',
+      description: '按参观动线串联主要展区，用于完整流程试讲。',
+      stepIds: orderedIds.slice(0, Math.min(4, orderedIds.length)),
+      targetDate: now + DAY * 5,
+      createdAt: now - DAY * 2,
+      updatedAt: now - DAY * 1
+    },
+    {
+      id: generateId(),
+      name: '重点展品强化路线',
+      description: '聚焦掌握度较低的核心讲解条目，安排集中演练。',
+      stepIds: orderedIds.slice(1, Math.min(3, orderedIds.length)),
+      targetDate: now + DAY * 10,
+      createdAt: now - DAY * 1,
+      updatedAt: now
+    }
+  ];
 }
 
 function getDefaultCards(): PracticeCard[] {

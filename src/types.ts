@@ -42,6 +42,66 @@ export interface PracticeCard {
   stageGoal?: StageGoal;
 }
 
+export interface TrainingRoute {
+  id: string;
+  name: string;
+  description: string;
+  stepIds: string[];
+  targetDate: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  lastRunAt?: number;
+}
+
+export interface RouteRunRecord {
+  id: string;
+  routeId: string;
+  startedAt: number;
+  finishedAt?: number;
+  practicedCardIds: string[];
+  skippedCardIds: string[];
+  note: string;
+}
+
+export interface RouteStep {
+  cardId: string;
+  card: PracticeCard | null;
+}
+
+export interface RouteGoalSummary {
+  cardId: string;
+  cardTitle: string;
+  status: GoalStatus;
+  overallProgress: number;
+  daysRemaining: number;
+}
+
+export interface RouteSummary {
+  stepCount: number;
+  validCount: number;
+  missingCount: number;
+  totalDurationMinutes: number;
+  unreviewedCount: number;
+  masteredCount: number;
+  withGoalCount: number;
+  nearDueCount: number;
+  overdueCount: number;
+  achievedCount: number;
+  runCount: number;
+  lastRunAt?: number;
+  daysToTarget: number;
+  goalSummaries: RouteGoalSummary[];
+}
+
+export type RouteSortBy = 'targetDate' | 'updated' | 'stepCount';
+
+export const ROUTE_SORT_LABELS: Record<RouteSortBy, string> = {
+  targetDate: '目标日期',
+  updated: '最近修改',
+  stepCount: '条目数'
+};
+
 export interface FilterCriteria {
   zones: string[];
   familiarity: FamiliarityLevel[];
@@ -104,6 +164,8 @@ export const FAMILIARITY_COLORS: Record<FamiliarityLevel, string> = {
 export const MAX_RECOMMENDED_DURATION = 15;
 export const HIGH_PRACTICE_THRESHOLD_DAYS = 3;
 export const HIGH_PRACTICE_COUNT = 5;
+export const MAX_RECOMMENDED_ROUTE_STEPS = 8;
+export const STALE_PRACTICE_DAYS = 7;
 
 export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
   none: '未设置目标',

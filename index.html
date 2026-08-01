@@ -12,16 +12,22 @@
       <h1>🎤 展馆讲解训练台</h1>
       <span class="subtitle">用于整理讲解词、易错点、试讲记录和阶段目标</span>
     </div>
+    <div class="view-tabs">
+      <button id="tab-cards" class="view-tab active" data-view="cards">🗂️ 讲解条目</button>
+      <button id="tab-routes" class="view-tab" data-view="routes">🧭 训练路线</button>
+    </div>
     <div class="header-actions">
       <button id="btn-daily-plan" class="btn btn-primary">📋 今日训练清单</button>
       <button id="btn-check" class="btn btn-outline">⚠️ 内容检查</button>
       <button id="btn-add" class="btn btn-success">➕ 新建讲解条目</button>
+      <button id="btn-add-route" class="btn btn-success" style="display:none">➕ 新建训练路线</button>
+      <button id="btn-recommend-route" class="btn btn-primary" style="display:none">🌟 今日重点路线</button>
       <button id="btn-export-json" class="btn btn-outline">💾 导出 JSON</button>
       <button id="btn-export-md" class="btn btn-outline">📄 导出 Markdown</button>
     </div>
   </header>
 
-  <main class="app-main">
+  <main class="app-main" data-view="cards">
     <aside class="sidebar-left">
       <div class="panel">
         <div class="panel-title">
@@ -153,6 +159,31 @@
         <div class="empty-desc">试试调整筛选条件，或点击右上角「新建讲解条目」录入第一段讲解内容</div>
       </div>
     </section>
+
+    <section class="routes-view">
+      <div class="content-toolbar">
+        <div id="routes-info" class="results-info"></div>
+        <div class="sort-area">
+          <label>排序：</label>
+          <select id="route-sort-by">
+            <option value="targetDate">目标日期</option>
+            <option value="updated">最近修改</option>
+            <option value="stepCount">条目数</option>
+          </select>
+          <select id="route-sort-order">
+            <option value="asc">升序</option>
+            <option value="desc">降序</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="routes-container" class="routes-grid"></div>
+      <div id="routes-empty-state" class="empty-state" style="display: none;">
+        <div class="empty-icon">🧭</div>
+        <div class="empty-title">还没有训练路线</div>
+        <div class="empty-desc">点击右上角「新建训练路线」，把零散讲解条目组织成一条完整的试讲路线</div>
+      </div>
+    </section>
   </main>
 
   <div id="modal-backdrop" class="modal-backdrop" style="display: none;">
@@ -280,6 +311,76 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" data-close>关闭</button>
+      </div>
+    </div>
+
+    <div id="route-modal" class="modal modal-large" style="display: none;">
+      <div class="modal-header">
+        <h2 id="route-modal-title">新建训练路线</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="route-editor">
+          <div class="route-editor-form">
+            <div class="form-field">
+              <label>路线名称 <span class="req">*</span></label>
+              <input type="text" id="rf-name" placeholder="例如：标准全程导览路线" />
+            </div>
+            <div class="form-field">
+              <label>目标日期 <span class="req">*</span></label>
+              <input type="date" id="rf-target-date" />
+            </div>
+            <div class="form-field col-2">
+              <label>路线说明</label>
+              <textarea id="rf-description" rows="2" placeholder="这条路线的训练重点、适用场景..."></textarea>
+            </div>
+          </div>
+
+          <div class="route-picker">
+            <div class="route-picker-col">
+              <div class="route-picker-head">
+                <span>已选步骤（<em id="rf-selected-count">0</em>，按顺序试讲）</span>
+                <button type="button" id="rf-clear-missing" class="btn-link small" style="display:none">🧹 清理缺失步骤</button>
+              </div>
+              <div id="rf-selected-list" class="route-step-list"></div>
+            </div>
+            <div class="route-picker-col">
+              <div class="route-picker-head">
+                <span>可选条目</span>
+                <select id="rf-pick-scope" class="mini-select">
+                  <option value="all">全部条目</option>
+                  <option value="filtered">当前筛选结果</option>
+                </select>
+              </div>
+              <input type="text" id="rf-pick-search" class="route-pick-search" placeholder="搜索条目标题、展区..." />
+              <div id="rf-pick-list" class="route-pick-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>取消</button>
+        <button id="btn-save-route" class="btn btn-primary">保存路线</button>
+      </div>
+    </div>
+
+    <div id="route-run-modal" class="modal modal-medium" style="display: none;">
+      <div class="modal-header">
+        <h2 id="route-run-title">▶️ 路线演练</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="route-run-progress" class="route-run-progress"></div>
+        <div id="route-run-current" class="route-run-current"></div>
+        <div class="form-field col-2" style="margin-top:12px">
+          <label>本次演练备注</label>
+          <textarea id="route-run-note" rows="2" placeholder="记录本轮演练的整体感受、需要改进的地方..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-run-skip" class="btn btn-outline">⏭️ 跳过本条</button>
+        <button id="btn-run-practice" class="btn btn-success">🎯 记录试讲并下一条</button>
+        <button id="btn-run-finish" class="btn btn-primary">✅ 结束路线</button>
       </div>
     </div>
 
