@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>展馆讲解训练台</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-left">
+      <h1>🎤 展馆讲解训练台</h1>
+      <span class="subtitle">用于整理讲解词、易错点、试讲记录和阶段目标</span>
+    </div>
+    <div class="header-actions">
+      <button id="btn-daily-plan" class="btn btn-primary">📋 今日训练清单</button>
+      <button id="btn-check" class="btn btn-outline">⚠️ 内容检查</button>
+      <button id="btn-add" class="btn btn-success">➕ 新建讲解条目</button>
+      <button id="btn-export-json" class="btn btn-outline">💾 导出 JSON</button>
+      <button id="btn-export-md" class="btn btn-outline">📄 导出 Markdown</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <aside class="sidebar-left">
+      <div class="panel">
+        <div class="panel-title">
+          <span>🔍 筛选条件</span>
+          <button id="btn-reset-filter" class="btn-link small">重置</button>
+        </div>
+        <div class="filter-group">
+          <label>搜索关键词</label>
+          <input type="text" id="filter-search" placeholder="标题、展区、关键词..." />
+        </div>
+        <div class="filter-group">
+          <label>关联展区</label>
+          <div id="filter-zones" class="chip-list"></div>
+        </div>
+        <div class="filter-group">
+          <label>掌握度</label>
+          <div id="filter-familiarity" class="chip-list">
+            <label class="chip"><input type="checkbox" value="new" /><span>未学习</span></label>
+            <label class="chip"><input type="checkbox" value="learning" /><span>学习中</span></label>
+            <label class="chip"><input type="checkbox" value="practicing" /><span>练习中</span></label>
+            <label class="chip"><input type="checkbox" value="mastered" /><span>已掌握</span></label>
+          </div>
+        </div>
+        <div class="filter-group two-col">
+          <div>
+            <label>最小时长（分）</label>
+            <input type="number" id="filter-min-dur" min="0" placeholder="不限" />
+          </div>
+          <div>
+            <label>最大时长（分）</label>
+            <input type="number" id="filter-max-dur" min="0" placeholder="不限" />
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>是否有易错点</label>
+          <select id="filter-has-errors">
+            <option value="all">全部</option>
+            <option value="yes">有易错点</option>
+            <option value="no">无易错点</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>是否已确认复盘</label>
+          <select id="filter-is-reviewed">
+            <option value="all">全部</option>
+            <option value="yes">已复盘</option>
+            <option value="no">未复盘</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>目标状态</label>
+          <div id="filter-goal-status" class="chip-list">
+            <label class="chip"><input type="checkbox" value="in_progress" /><span>进行中</span></label>
+            <label class="chip"><input type="checkbox" value="near_due" /><span>临期</span></label>
+            <label class="chip"><input type="checkbox" value="overdue" /><span>逾期</span></label>
+            <label class="chip"><input type="checkbox" value="achieved" /><span>已达成</span></label>
+            <label class="chip"><input type="checkbox" value="none" /><span>无目标</span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="batch-panel" style="display: none;">
+        <div class="panel-title">
+          <span>🛠️ 批量操作 <em id="selected-count">（已选 0）</em></span>
+        </div>
+        <div class="filter-group">
+          <label>调整掌握度</label>
+          <select id="batch-familiarity">
+            <option value="">不调整</option>
+            <option value="new">未学习</option>
+            <option value="learning">学习中</option>
+            <option value="practicing">练习中</option>
+            <option value="mastered">已掌握</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>调整复盘状态</label>
+          <select id="batch-reviewed">
+            <option value="">不调整</option>
+            <option value="yes">标记已复盘</option>
+            <option value="no">取消复盘</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>调整收藏状态</label>
+          <select id="batch-favorite">
+            <option value="">不调整</option>
+            <option value="yes">收藏</option>
+            <option value="no">取消收藏</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button id="btn-batch-apply" class="btn btn-primary">应用修改</button>
+          <button id="btn-select-all" class="btn btn-outline">全选当前</button>
+          <button id="btn-clear-select" class="btn btn-outline">清空选择</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><span>📊 训练概览</span></div>
+        <div id="stats" class="stats"></div>
+      </div>
+    </aside>
+
+    <section class="content-area">
+      <div class="content-toolbar">
+        <div id="results-info" class="results-info"></div>
+        <div class="sort-area">
+          <label>排序：</label>
+          <select id="sort-by">
+            <option value="updated">最近修改</option>
+            <option value="created">创建时间</option>
+            <option value="duration">时长</option>
+            <option value="title">标题</option>
+            <option value="zone">展区</option>
+            <option value="practice">试讲次数</option>
+          </select>
+          <select id="sort-order">
+            <option value="desc">降序</option>
+            <option value="asc">升序</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="cards-container" class="cards-grid"></div>
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">暂无匹配的讲解条目</div>
+        <div class="empty-desc">试试调整筛选条件，或点击右上角「新建讲解条目」录入第一段讲解内容</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal-backdrop" class="modal-backdrop" style="display: none;">
+    <div id="card-modal" class="modal modal-large" style="display: none;">
+      <div class="modal-header">
+        <h2 id="modal-title">新建讲解条目</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="card-form">
+          <div class="form-grid">
+            <div class="form-field col-2">
+              <label>条目标题 <span class="req">*</span></label>
+              <input type="text" id="f-title" required placeholder="例如：序厅开场介绍" />
+            </div>
+            <div class="form-field">
+              <label>关联展区 <span class="req">*</span></label>
+              <input type="text" id="f-zone" required list="zone-list" placeholder="例如：序厅" />
+              <datalist id="zone-list"></datalist>
+            </div>
+            <div class="form-field">
+              <label>建议时长（分钟）</label>
+              <input type="number" id="f-duration" min="1" max="180" value="5" />
+            </div>
+            <div class="form-field">
+              <label>掌握度</label>
+              <select id="f-familiarity">
+                <option value="new">未学习</option>
+                <option value="learning">学习中</option>
+                <option value="practicing">练习中</option>
+                <option value="mastered">已掌握</option>
+              </select>
+            </div>
+            <div class="form-field col-2">
+              <label>关键词（逗号或顿号分隔）</label>
+              <textarea id="f-keywords" rows="2" placeholder="欢迎词, 路线指引, 安全须知"></textarea>
+            </div>
+            <div class="form-field col-2">
+              <label>易错点（每行/每项一个）</label>
+              <textarea id="f-errorpoints" rows="3" placeholder="容易遗漏出口说明&#10;不要记错年代数字"></textarea>
+            </div>
+            <div class="form-field col-2">
+              <label>替代表达（每行一句）</label>
+              <textarea id="f-alternatives" rows="3" placeholder="各位来宾，大家好&#10;欢迎来到展馆"></textarea>
+            </div>
+            <div class="form-field col-2">
+              <label>复盘备注</label>
+              <textarea id="f-review" rows="3" placeholder="记录上次试讲的问题、改进点..."></textarea>
+            </div>
+            <div class="form-field checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="f-favorite" />
+                <span>⭐ 标为重点条目</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="f-reviewed" />
+                <span>✅ 标记已完成复盘</span>
+              </label>
+            </div>
+            <div class="form-field col-2">
+              <div class="section-divider">
+                <span>🎯 阶段目标设置</span>
+              </div>
+            </div>
+            <div class="form-field">
+              <label class="checkbox-label">
+                <input type="checkbox" id="f-has-goal" />
+                <span>设置本阶段目标</span>
+              </label>
+            </div>
+            <div class="form-field">
+              <label>目标掌握度</label>
+              <select id="f-goal-familiarity" disabled>
+                <option value="maintain">保持现状</option>
+                <option value="learning">学习中</option>
+                <option value="practicing">练习中</option>
+                <option value="mastered">已掌握</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>目标试讲次数</label>
+              <input type="number" id="f-goal-practice" min="0" max="100" value="5" disabled />
+            </div>
+            <div class="form-field">
+              <label>目标复盘</label>
+              <select id="f-goal-review" disabled>
+                <option value="no">不需要</option>
+                <option value="yes">需要完成复盘</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>截止日期</label>
+              <input type="date" id="f-goal-due" disabled />
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>取消</button>
+        <button id="btn-save-card" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+
+    <div id="daily-modal" class="modal modal-medium" style="display: none;">
+      <div class="modal-header">
+        <h2>📋 今日训练清单</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="daily-summary" class="daily-summary"></div>
+        <div id="daily-list" class="daily-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>关闭</button>
+      </div>
+    </div>
+
+    <div id="check-modal" class="modal modal-medium" style="display: none;">
+      <div class="modal-header">
+        <h2>⚠️ 内容检查结果</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="check-results" class="check-results"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>关闭</button>
+      </div>
+    </div>
+
+    <div id="confirm-modal" class="modal modal-small" style="display: none;">
+      <div class="modal-header">
+        <h2 id="confirm-title">确认操作</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirm-cancel" class="btn btn-outline">取消</button>
+        <button id="confirm-ok" class="btn btn-danger">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
