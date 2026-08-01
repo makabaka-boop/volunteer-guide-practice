@@ -4,16 +4,22 @@ import type {
   DailyPracticePlan,
   DailyPracticeItem,
   GoalProgress,
-  GoalStatus
+  GoalStatus,
+  TrainingRoute,
+  RouteRunRecord,
+  RouteStepRef,
+  RouteSummary,
+  RouteGoalSummary
 } from './types';
 import {
   MAX_RECOMMENDED_DURATION,
+  MAX_RECOMMENDED_ROUTE_STEPS,
   HIGH_PRACTICE_THRESHOLD_DAYS,
   HIGH_PRACTICE_COUNT,
   GOAL_NEAR_DUE_DAYS,
   getFamiliarityIndex
 } from './types';
-import { generateId } from './storage';
+import { generateId, createEmptyRoute } from './storage';
 
 export function formatDate(ts: number | undefined): string {
   if (!ts) return '从未';
@@ -260,23 +266,151 @@ export function generateDailyPlan(cards: PracticeCard[]): DailyPracticePlan {
   };
 }
 
-export function exportToJson(cards: PracticeCard[]): string {
+function interleaveZones(items: DailyPracticeItem[]): DailyPracticeItem[] {
+  const result: DailyPracticeItem[] = [];
+  const pool = [...items];
+  while (pool.length > 0) {
+    let pickIdx = 0;
+    const lastTwo = result.slice(-2);
+    if (
+      lastTwo.length === 2 &&
+      lastTwo[0].card.zone &&
+      lastTwo[0].card.zone === lastTwo[1].card.zone
+    ) {
+      const altIdx = pool.findIndex((it) => it.card.zone !== lastTwo[0].card.zone);
+      if (altIdx >= 0) pickIdx = altIdx;
+    }
+    result.push(pool.splice(pickIdx, 1)[0]);
+  }
+  return result;
+}
+
+export function generateRecommendedRoute(
+  cards: PracticeCard[],
+  existingRoutes: TrainingRoute[],
+  runs: RouteRunRecord[]
+): TrainingRoute {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  let name = `今日重点路线 ${dateStr}`;
+  let suffix = 2;
+  while (existingRoutes.some((r) => r.name === name)) {
+    name = `今日重点路线 ${dateStr}（${suffix}）`;
+    suffix++;
+  }
+
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const practicedToday = new Set<string>();
+  runs.forEach((run) => {
+    if (run.startedAt >= dayStart) {
+      run.practicedCardIds.forEach((id) => practicedToday.add(id));
+    }
+  });
+
+  const plan = generateDailyPlan(cards);
+  const picked = plan.items
+    .filter((it) => !practicedToday.has(it.card.id))
+    .slice(0, MAX_RECOMMENDED_ROUTE_STEPS);
+  const ordered = interleaveZones(picked);
+
+  const draft = createEmptyRoute();
+  draft.name = name;
+  draft.description = `根据复盘状态、掌握度、阶段目标和最近练习情况自动生成（${dateStr}），可在保存前调整顺序。`;
+  draft.stepIds = ordered.map((it) => it.card.id);
+  draft.targetDate = dayStart + 86400000 - 1;
+  return draft;
+}
+
+export function getRouteCards(route: TrainingRoute, cards: PracticeCard[]): RouteStepRef[] {
+  const cardMap = new Map<string, PracticeCard>();
+  cards.forEach((c) => cardMap.set(c.id, c));
+  return route.stepIds.map((cardId) => ({
+    cardId,
+    card: cardMap.get(cardId) || null
+  }));
+}
+
+export function calculateRouteSummary(
+  route: TrainingRoute,
+  cards: PracticeCard[],
+  runs: RouteRunRecord[]
+): RouteSummary {
+  const steps = getRouteCards(route, cards);
+  const existing = steps.filter((s) => s.card !== null);
+  const missingCount = steps.length - existing.length;
+  const totalDurationMinutes = existing.reduce((sum, s) => sum + (s.card ? s.card.durationMinutes : 0), 0);
+  const unreviewedCount = existing.filter((s) => s.card && !s.card.isReviewed).length;
+
+  const routeRuns = runs.filter((r) => r.routeId === route.id);
+  const finishedRuns = routeRuns.filter((r) => r.finishedAt !== undefined);
+  const lastRunAt = routeRuns.reduce<number | undefined>(
+    (max, r) => (max === undefined || r.startedAt > max ? r.startedAt : max),
+    undefined
+  );
+
+  const goalSummary: RouteGoalSummary = {
+    totalWithGoals: 0,
+    achieved: 0,
+    inProgress: 0,
+    nearDue: 0,
+    overdue: 0,
+    overallProgress: 0
+  };
+  let progressSum = 0;
+  for (const step of existing) {
+    if (!step.card || !step.card.stageGoal) continue;
+    const progress = calculateGoalProgress(step.card);
+    if (!progress) continue;
+    goalSummary.totalWithGoals++;
+    progressSum += progress.overallProgress;
+    if (progress.status === 'achieved') goalSummary.achieved++;
+    else if (progress.status === 'in_progress') goalSummary.inProgress++;
+    else if (progress.status === 'near_due') goalSummary.nearDue++;
+    else if (progress.status === 'overdue') goalSummary.overdue++;
+  }
+  goalSummary.overallProgress = goalSummary.totalWithGoals > 0
+    ? progressSum / goalSummary.totalWithGoals
+    : 0;
+
+  return {
+    stepCount: steps.length,
+    missingCount,
+    unreviewedCount,
+    totalDurationMinutes,
+    runCount: routeRuns.length,
+    finishedRunCount: finishedRuns.length,
+    lastRunAt: route.lastRunAt !== undefined ? route.lastRunAt : lastRunAt,
+    goalSummary
+  };
+}
+
+export function exportToJson(cards: PracticeCard[], routes: TrainingRoute[], runs: RouteRunRecord[]): string {
   const payload = {
     exportTime: new Date().toISOString(),
-    version: 1,
+    version: 2,
     count: cards.length,
-    cards
+    cards,
+    routeCount: routes.length,
+    routes,
+    routeRuns: runs,
+    routeSummaries: routes.map((route) => ({
+      routeId: route.id,
+      routeName: route.name,
+      summary: calculateRouteSummary(route, cards, runs)
+    }))
   };
   return JSON.stringify(payload, null, 2);
 }
 
-export function exportToMarkdown(cards: PracticeCard[]): string {
+export function exportToMarkdown(cards: PracticeCard[], routes: TrainingRoute[], runs: RouteRunRecord[]): string {
   const lines: string[] = [];
   lines.push(`# 展馆讲解训练台导出`);
   lines.push('');
   lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
   lines.push(`条目数量：${cards.length}`);
   lines.push(`总预计时长：${formatDuration(cards.reduce((s, c) => s + c.durationMinutes, 0))}`);
+  lines.push(`训练路线数量：${routes.length}`);
   lines.push('');
   lines.push('---');
   lines.push('');
@@ -340,6 +474,77 @@ export function exportToMarkdown(cards: PracticeCard[]): string {
     }
     lines.push('---');
     lines.push('');
+  }
+
+  if (routes.length > 0) {
+    lines.push('# 训练路线');
+    lines.push('');
+
+    for (const route of routes) {
+      const steps = getRouteCards(route, cards);
+      const summary = calculateRouteSummary(route, cards, runs);
+      const routeRuns = runs
+        .filter((r) => r.routeId === route.id)
+        .sort((a, b) => b.startedAt - a.startedAt);
+
+      lines.push(`## 🗺️ ${route.name || '(未命名路线)'}`);
+      lines.push('');
+      if (route.description) {
+        lines.push(route.description);
+        lines.push('');
+      }
+      lines.push(`- **目标日期**：${route.targetDate ? formatDate(route.targetDate) : '未设置'}`);
+      lines.push(`- **步骤数**：${summary.stepCount}${summary.missingCount > 0 ? `（⚠️ ${summary.missingCount} 个步骤引用的条目已删除）` : ''}`);
+      lines.push(`- **预计总时长**：${formatDuration(summary.totalDurationMinutes)}`);
+      lines.push(`- **未复盘条目**：${summary.unreviewedCount} 个`);
+      lines.push(`- **创建时间**：${formatDate(route.createdAt)}`);
+      lines.push(`- **最近修改**：${formatDate(route.updatedAt)}`);
+      if (route.archivedAt) {
+        lines.push(`- **已归档**：${formatDate(route.archivedAt)}`);
+      }
+      lines.push(`- **演练次数**：${summary.runCount} 次（完成 ${summary.finishedRunCount} 次）`);
+      lines.push(`- **最近演练**：${formatDateTime(summary.lastRunAt)}`);
+      lines.push('');
+
+      if (steps.length > 0) {
+        lines.push('### 路线步骤');
+        lines.push('');
+        steps.forEach((step, idx) => {
+          if (step.card) {
+            lines.push(`${idx + 1}. ${step.card.title}（${step.card.zone || '未设展区'} · ${step.card.durationMinutes} 分钟 · ${step.card.familiarity}）`);
+          } else {
+            lines.push(`${idx + 1}. ⚠️ 缺失条目（原条目已被删除，id：${step.cardId}）`);
+          }
+        });
+        lines.push('');
+      }
+
+      lines.push('### 阶段目标摘要');
+      lines.push('');
+      if (summary.goalSummary.totalWithGoals === 0) {
+        lines.push('本路线内条目均未设置阶段目标。');
+      } else {
+        lines.push(`- **设目标条目**：${summary.goalSummary.totalWithGoals} 个`);
+        lines.push(`- **整体目标进度**：${Math.round(summary.goalSummary.overallProgress * 100)}%`);
+        lines.push(`- **已达成**：${summary.goalSummary.achieved} 个`);
+        lines.push(`- **进行中**：${summary.goalSummary.inProgress} 个`);
+        lines.push(`- **临期**：${summary.goalSummary.nearDue} 个`);
+        lines.push(`- **已逾期**：${summary.goalSummary.overdue} 个`);
+      }
+      lines.push('');
+
+      if (routeRuns.length > 0) {
+        lines.push('### 演练记录');
+        lines.push('');
+        for (const run of routeRuns) {
+          lines.push(`- ${formatDateTime(run.startedAt)} 开始，${run.finishedAt ? `${formatDateTime(run.finishedAt)} 结束` : '未完成'}；试讲 ${run.practicedCardIds.length} 条，跳过 ${run.skippedCardIds.length} 条${run.note ? `；备注：${run.note}` : ''}`);
+        }
+        lines.push('');
+      }
+
+      lines.push('---');
+      lines.push('');
+    }
   }
 
   return lines.join('\n');
