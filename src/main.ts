@@ -6,7 +6,9 @@ import type {
   DailyPracticePlan,
   GoalStatus,
   StageGoal,
-  GoalFamiliarityTarget
+  GoalFamiliarityTarget,
+  TrainingRoute,
+  RouteRunRecord
 } from './types';
 import {
   FAMILIARITY_LABELS,
@@ -23,10 +25,17 @@ import {
   filterCards,
   createEmptyCard,
   cloneCard,
-  getUniqueZones
+  getUniqueZones,
+  createEmptyRoute,
+  cloneRoute,
+  loadRoutes,
+  saveRoutes,
+  loadRouteRuns,
+  saveRouteRuns
 } from './storage';
 import {
   formatDate,
+  formatDateTime,
   formatDuration,
   runChecks,
   generateDailyPlan,
@@ -37,7 +46,17 @@ import {
   calculateGoalProgress,
   getGoalStatus,
   isGoalAchieved,
-  formatDaysRemaining
+  formatDaysRemaining,
+  getRouteCards,
+  getRouteMissingStepIds,
+  cleanRouteMissingSteps,
+  calculateRouteSummary,
+  sortRoutes,
+  startRouteRun,
+  sortCardsByZoneOrder,
+  DEFAULT_ROUTE_ZONE_ORDER,
+  generateRecommendedRoute,
+  type RouteSortKey
 } from './utils';
 
 let cards: PracticeCard[] = [];
@@ -45,6 +64,17 @@ let selectedIds: Set<string> = new Set();
 let editingCard: PracticeCard | null = null;
 let sortBy: string = 'updated';
 let sortOrder: 'asc' | 'desc' = 'desc';
+
+let routes: TrainingRoute[] = [];
+let routeRuns: RouteRunRecord[] = [];
+let editingRoute: TrainingRoute | null = null;
+let activeRun: RouteRunRecord | null = null;
+let activeRunRouteId: string | null = null;
+let currentStepIndex: number = 0;
+let routeSortBy: RouteSortKey = 'targetDate';
+let routeSortOrder: 'asc' | 'desc' = 'asc';
+let pickerSource: 'filtered' | 'all' = 'filtered';
+let pickerSearch: string = '';
 
 const filterCriteria: FilterCriteria = {
   zones: [],
@@ -117,11 +147,22 @@ function closeModal(modalId: string): void {
   );
   modal.style.display = 'none';
   if (!anyOpen) backdrop.style.display = 'none';
+  if (modalId === 'route-runner-modal' && activeRun) {
+    activeRun = null;
+    activeRunRouteId = null;
+    currentStepIndex = 0;
+    render();
+  }
+  if (modalId === 'route-editor-modal') {
+    editingRoute = null;
+  }
 }
 
 function persist(): void {
   saveCards(cards);
   saveSelectedIds(selectedIds);
+  saveRoutes(routes);
+  saveRouteRuns(routeRuns);
 }
 
 function render(): void {
@@ -129,6 +170,8 @@ function render(): void {
   renderStats();
   renderCards();
   renderBatchPanel();
+  renderRouteStats();
+  renderRoutes();
 }
 
 function renderZoneChips(): void {
@@ -711,6 +754,805 @@ function showCheckResults(): void {
   openModal('check-modal');
 }
 
+function switchView(view: 'cards' | 'routes'): void {
+  document.querySelectorAll('.view-tab').forEach((t) => {
+    t.classList.toggle('active', (t as HTMLElement).dataset.view === view);
+  });
+  const cardsView = document.getElementById('cards-view')!;
+  const routesView = document.getElementById('routes-view')!;
+  const cardsSidebar = document.getElementById('cards-sidebar')!;
+  const routesSidebar = document.getElementById('routes-sidebar')!;
+  if (view === 'cards') {
+    cardsView.style.display = 'flex';
+    routesView.style.display = 'none';
+    cardsSidebar.style.display = 'block';
+    routesSidebar.style.display = 'none';
+  } else {
+    cardsView.style.display = 'none';
+    routesView.style.display = 'flex';
+    cardsSidebar.style.display = 'none';
+    routesSidebar.style.display = 'block';
+  }
+}
+
+function renderRouteStats(): void {
+  const container = document.getElementById('route-stats')!;
+  const activeCount = routes.filter((r) => !r.archivedAt).length;
+  const archivedCount = routes.length - activeCount;
+  const totalRuns = routeRuns.filter((r) => r.finishedAt).length;
+  const missingCount = routes.reduce((sum, r) => sum + getRouteMissingStepIds(r, cards).length, 0);
+  const totalGoals = routes.reduce((sum, r) => {
+    const s = calculateRouteSummary(r, cards, routeRuns);
+    return sum + s.goalSummaries.length;
+  }, 0);
+  const achievedGoals = routes.reduce((sum, r) => {
+    const s = calculateRouteSummary(r, cards, routeRuns);
+    return sum + s.achievedGoalCount;
+  }, 0);
+
+  container.innerHTML = `
+    <div class="stat-item"><div class="stat-value">${routes.length}</div><div class="stat-label">路线总数</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#4f46e5">${activeCount}</div><div class="stat-label">进行中</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#10b981">${totalRuns}</div><div class="stat-label">完成执行</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#${missingCount > 0 ? 'ef4444' : '94a3b8'}">${missingCount}</div><div class="stat-label">缺失步骤</div></div>
+    ${totalGoals > 0 ? `<div class="stat-item"><div class="stat-value" style="color:#10b981">${achievedGoals}/${totalGoals}</div><div class="stat-label">🎯 目标达成</div></div>` : ''}
+    ${archivedCount > 0 ? `<div class="stat-item"><div class="stat-value" style="color:#94a3b8">${archivedCount}</div><div class="stat-label">已归档</div></div>` : ''}
+  `;
+}
+
+function getSortedRoutes(): TrainingRoute[] {
+  return sortRoutes(routes, cards, routeRuns, routeSortBy, routeSortOrder);
+}
+
+function renderRoutes(): void {
+  const container = document.getElementById('routes-container')!;
+  const empty = document.getElementById('routes-empty-state')!;
+  const info = document.getElementById('routes-info')!;
+  const list = getSortedRoutes();
+
+  if (list.length === 0) {
+    container.innerHTML = '';
+    empty.style.display = 'block';
+    info.innerHTML = '暂无训练路线';
+    return;
+  }
+  empty.style.display = 'none';
+  const activeCount = list.filter((r) => !r.archivedAt).length;
+  const totalSteps = list.reduce((s, r) => s + r.stepIds.length, 0);
+  info.innerHTML = `共 <strong>${list.length}</strong> 条路线（进行中 ${activeCount}），累计 <strong>${totalSteps}</strong> 个步骤`;
+
+  container.innerHTML = list.map(renderRouteCardHtml).join('');
+
+  container.querySelectorAll('.route-card').forEach((el) => {
+    const id = el.getAttribute('data-id')!;
+    const route = routes.find((r) => r.id === id);
+    if (!route) return;
+
+    el.querySelector('[data-route-action="run"]')?.addEventListener('click', () => startRouteRunner(route));
+    el.querySelector('[data-route-action="edit"]')?.addEventListener('click', () => openRouteEditor(route));
+    el.querySelector('[data-route-action="copy"]')?.addEventListener('click', () => {
+      const copied = cloneRoute(route);
+      routes.push(copied);
+      persist();
+      render();
+      toast(`已复制路线「${route.name}」`, 'success');
+    });
+    el.querySelector('[data-route-action="detail"]')?.addEventListener('click', () => showRouteDetail(route));
+    el.querySelector('[data-route-action="archive"]')?.addEventListener('click', () => toggleArchiveRoute(route));
+    el.querySelector('[data-route-action="delete"]')?.addEventListener('click', () => {
+      showConfirm('删除路线', `确认删除路线「${route.name}」？相关执行记录也会一并删除，此操作不可恢复。`, () => {
+        routes = routes.filter((r) => r.id !== id);
+        routeRuns = routeRuns.filter((r) => r.routeId !== id);
+        persist();
+        render();
+        toast('已删除路线', 'success');
+      });
+    });
+    el.querySelector('[data-route-action="clean-missing"]')?.addEventListener('click', () => {
+      const missing = getRouteMissingStepIds(route, cards);
+      showConfirm('清理无效步骤', `将从路线中移除 ${missing.length} 个已失效的条目引用，确认继续？`, () => {
+        const idx = routes.findIndex((r) => r.id === id);
+        if (idx >= 0) {
+          routes[idx] = cleanRouteMissingSteps(route, cards);
+          persist();
+          render();
+          toast(`已清理 ${missing.length} 个无效步骤`, 'success');
+        }
+      });
+    });
+  });
+}
+
+function renderRouteCardHtml(route: TrainingRoute): string {
+  const summary = calculateRouteSummary(route, cards, routeRuns);
+  const refs = getRouteCards(route, cards);
+  const now = Date.now();
+  const DAY = 86400000;
+  const daysToTarget = Math.ceil((route.targetDate - now) / DAY);
+  let targetClass = 'target';
+  let targetText = formatDate(route.targetDate);
+  if (!route.archivedAt) {
+    if (daysToTarget < 0) { targetClass += ' overdue'; targetText = `已逾期 ${Math.abs(daysToTarget)} 天`; }
+    else if (daysToTarget <= 3) { targetClass += ' near'; targetText = `${daysToTarget === 0 ? '今天' : daysToTarget + ' 天后'}截止`; }
+    else { targetText = `${daysToTarget} 天后截止`; }
+  }
+
+  const previewRefs = refs.slice(0, 4);
+  const extraCount = refs.length - previewRefs.length;
+  const goalChips: string[] = [];
+  if (summary.goalSummaries.length > 0) {
+    goalChips.push(`<span class="route-goal-chip achieved">✅ ${summary.achievedGoalCount} 已达成</span>`);
+    if (summary.overdueGoalCount > 0) goalChips.push(`<span class="route-goal-chip overdue">⏰ ${summary.overdueGoalCount} 逾期</span>`);
+    if (summary.nearDueGoalCount > 0) goalChips.push(`<span class="route-goal-chip near">⚡ ${summary.nearDueGoalCount} 临期</span>`);
+    const otherActive = summary.activeGoalCount - summary.overdueGoalCount - summary.nearDueGoalCount;
+    if (otherActive > 0) goalChips.push(`<span class="route-goal-chip active">🎯 ${otherActive} 进行中</span>`);
+  }
+
+  const alertChips: string[] = [];
+  if (summary.unreviewedCount > 0) alertChips.push(`<span class="route-meta-pill unreviewed" title="未复盘条目数">📝 ${summary.unreviewedCount} 待复盘</span>`);
+  if (summary.missingCount > 0) alertChips.push(`<span class="route-meta-pill missing" title="缺失条目数">⚠️ ${summary.missingCount} 缺失</span>`);
+
+  return `
+    <div class="route-card ${route.archivedAt ? 'archived' : ''}" data-id="${route.id}">
+      <div class="route-card-header">
+        <h3 title="${escapeHtml(route.name)}">${escapeHtml(route.name || '(未命名路线)')}</h3>
+      </div>
+      ${route.description ? `<div class="route-card-desc">${escapeHtml(route.description)}</div>` : '<div class="route-card-desc"></div>'}
+      <div class="route-meta-row">
+        <span class="route-meta-pill ${targetClass}">📅 ${targetText}</span>
+        <span class="route-meta-pill">🧭 ${summary.validSteps}/${summary.totalSteps} 步</span>
+        <span class="route-meta-pill duration">⏱️ ${formatDuration(summary.totalDurationMinutes)}</span>
+        ${alertChips.join('')}
+        ${summary.runCount > 0 ? `<span class="route-meta-pill done">▶️ 已练 ${summary.runCount} 次</span>` : ''}
+        ${summary.lastRunAt ? `<span class="route-meta-pill">最近 ${formatDate(summary.lastRunAt)}</span>` : ''}
+      </div>
+      ${goalChips.length > 0 ? `<div class="route-goal-strip">${goalChips.join('')}</div>` : ''}
+      ${summary.missingStepIds.length > 0 ? `
+        <div class="route-missing-banner">
+          <span>⚠️ 检测到 ${summary.missingStepIds.length} 个条目已被删除，步骤引用失效</span>
+          <button data-route-action="clean-missing">一键清理</button>
+        </div>
+      ` : ''}
+      <div class="route-steps-preview">
+        ${previewRefs.map((ref, idx) => `
+          <div class="route-step-preview-item ${ref.missing ? 'missing' : ''}">
+            <span class="route-step-idx">${idx + 1}</span>
+            <span class="route-step-name">${ref.missing ? `缺失条目（${ref.cardId.slice(0, 8)}）` : escapeHtml(ref.card!.title)}</span>
+          </div>
+        `).join('')}
+        ${extraCount > 0 ? `<div class="route-step-more">…还有 ${extraCount} 个步骤</div>` : ''}
+      </div>
+      <div class="route-actions">
+        <button class="success" data-route-action="run" ${summary.validSteps === 0 ? 'disabled' : ''}>▶️ 开始执行</button>
+        <button class="primary" data-route-action="edit">✏️ 编辑</button>
+        <button data-route-action="detail">📄 详情</button>
+        <button data-route-action="copy">📋 复制</button>
+        <button data-route-action="archive">${route.archivedAt ? '📤 恢复' : '📥 归档'}</button>
+        <button class="danger" data-route-action="delete">🗑️ 删除</button>
+      </div>
+    </div>
+  `;
+}
+
+function getPickerCards(): PracticeCard[] {
+  const source = pickerSource === 'filtered' ? getFilteredSortedCards() : cards;
+  let result = source.filter((c) => c.title.trim());
+  if (pickerSearch) {
+    const q = pickerSearch.toLowerCase();
+    result = result.filter((c) =>
+      c.title.toLowerCase().includes(q) ||
+      c.zone.toLowerCase().includes(q) ||
+      c.keywords.some((k) => k.toLowerCase().includes(q))
+    );
+  }
+  return result;
+}
+
+function quickCreateZoneRoute(): void {
+  const matched = cards.filter((c) => c.title.trim() && DEFAULT_ROUTE_ZONE_ORDER.includes(c.zone));
+  if (matched.length === 0) {
+    toast(`未找到属于「${DEFAULT_ROUTE_ZONE_ORDER.join('、')}」的条目，无法快速生成`, 'warning');
+    return;
+  }
+  const ordered = sortCardsByZoneOrder(matched, DEFAULT_ROUTE_ZONE_ORDER);
+  const zonesFound = Array.from(new Set(ordered.map((c) => c.zone)));
+  const route = createEmptyRoute();
+  route.name = `全馆路线（${zonesFound.join('→')}）`;
+  route.description = `排练前快速生成，按 ${zonesFound.join('、')} 顺序串联，共 ${ordered.length} 个条目。`;
+  route.stepIds = ordered.map((c) => c.id);
+  routes.push(route);
+  persist();
+  render();
+  toast(`已按展区顺序生成路线，包含 ${ordered.length} 个条目`, 'success');
+}
+
+function generateTodayRoute(): void {
+  const draft = generateRecommendedRoute(cards, routes, routeRuns);
+  if (draft.stepIds.length === 0) {
+    toast('当前没有符合推荐条件的条目，无法生成今日重点路线', 'warning');
+    return;
+  }
+  toast(`已根据复盘状态、掌握度、目标与练习情况推荐 ${draft.stepIds.length} 个条目，可在弹窗中调整顺序后保存`, 'info');
+  openRouteEditor(draft);
+}
+
+function openRouteEditor(route: TrainingRoute | null): void {
+  editingRoute = route ? { ...route, stepIds: [...route.stepIds] } : createEmptyRoute();
+  const isExisting = route ? routes.some((r) => r.id === route.id) : false;
+  if (!route) {
+    document.getElementById('route-editor-title')!.textContent = '新建训练路线';
+  } else if (!isExisting) {
+    document.getElementById('route-editor-title')!.textContent = '预览今日重点路线（调整后保存）';
+  } else {
+    document.getElementById('route-editor-title')!.textContent = '编辑训练路线';
+  }
+
+  (document.getElementById('rf-name') as HTMLInputElement).value = editingRoute.name;
+  (document.getElementById('rf-description') as HTMLTextAreaElement).value = editingRoute.description;
+  const dueDate = new Date(editingRoute.targetDate);
+  (document.getElementById('rf-target-date') as HTMLInputElement).value = dueDate.toISOString().split('T')[0];
+  (document.getElementById('rf-archived') as HTMLSelectElement).value = editingRoute.archivedAt ? 'yes' : 'no';
+
+  pickerSource = 'filtered';
+  pickerSearch = '';
+  (document.getElementById('rf-picker-search') as HTMLInputElement).value = '';
+  document.querySelectorAll<HTMLInputElement>('input[name="rf-picker-source"]').forEach((r) => {
+    r.checked = r.value === 'filtered';
+  });
+
+  renderRoutePicker();
+  renderRouteStepList();
+  openModal('route-editor-modal');
+}
+
+function renderRoutePicker(): void {
+  if (!editingRoute) return;
+  const listEl = document.getElementById('rf-available-list')!;
+  const countEl = document.getElementById('rf-available-count')!;
+  const selectedSet = new Set(editingRoute.stepIds);
+  const pickerCards = getPickerCards();
+  countEl.textContent = String(pickerCards.length);
+
+  if (pickerCards.length === 0) {
+    listEl.innerHTML = '<div class="route-picker-empty">没有可选条目，请调整筛选条件或切换到「全部条目」</div>';
+    return;
+  }
+
+  listEl.innerHTML = pickerCards.map((card) => {
+    const checked = selectedSet.has(card.id);
+    const goalStatus = getGoalStatus(card);
+    const famColor = FAMILIARITY_COLORS[card.familiarity];
+    const goalColor = GOAL_STATUS_COLORS[goalStatus];
+    const goalLabel = GOAL_STATUS_LABELS[goalStatus];
+    return `
+      <label class="picker-card ${checked ? 'selected' : ''}" data-card-id="${card.id}">
+        <input type="checkbox" ${checked ? 'checked' : ''} data-picker-check="${card.id}" />
+        <div class="picker-card-info">
+          <div class="picker-card-title">${escapeHtml(card.title)}</div>
+          <div class="picker-card-meta">
+            <span class="zone-tag">📍 ${escapeHtml(card.zone || '未设展区')}</span>
+            <span>⏱️ ${card.durationMinutes}分</span>
+            <span class="fam-tag" style="background:${famColor}">${FAMILIARITY_LABELS[card.familiarity]}</span>
+            ${card.stageGoal ? `<span class="picker-goal-dot" style="background:${goalColor}" title="目标：${goalLabel}"></span>` : ''}
+            ${!card.isReviewed && card.practiceCount > 0 ? '<span class="picker-flag review">待复盘</span>' : ''}
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll<HTMLInputElement>('[data-picker-check]').forEach((cb) => {
+    cb.addEventListener('change', (e) => {
+      if (!editingRoute) return;
+      const cardId = (e.target as HTMLInputElement).getAttribute('data-picker-check')!;
+      if ((e.target as HTMLInputElement).checked) {
+        if (!editingRoute.stepIds.includes(cardId)) editingRoute.stepIds.push(cardId);
+      } else {
+        editingRoute.stepIds = editingRoute.stepIds.filter((id) => id !== cardId);
+      }
+      renderRoutePicker();
+      renderRouteStepList();
+    });
+  });
+}
+
+function renderRouteStepList(): void {
+  if (!editingRoute) return;
+  const listEl = document.getElementById('rf-step-list')!;
+  const countEl = document.getElementById('rf-selected-count')!;
+  const refs = getRouteCards(editingRoute, cards);
+  countEl.textContent = String(refs.length);
+  if (refs.length === 0) {
+    listEl.innerHTML = '<div class="route-picker-empty">从左侧勾选条目加入路线</div>';
+    return;
+  }
+  listEl.innerHTML = refs.map((ref, idx) => {
+    if (ref.missing) {
+      return `
+        <div class="route-step-item missing" data-idx="${idx}">
+          <span class="idx">!</span>
+          <span class="name">⚠️ 缺失条目（ID: ${ref.cardId.slice(0, 8)}）<small>条目已删除</small></span>
+          <span class="step-btns">
+            <button class="del" data-step-action="remove" title="移除">✕</button>
+          </span>
+        </div>
+      `;
+    }
+    const card = ref.card!;
+    const famColor = FAMILIARITY_COLORS[card.familiarity];
+    const goalStatus = getGoalStatus(card);
+    const goalColor = GOAL_STATUS_COLORS[goalStatus];
+    const goalLabel = GOAL_STATUS_LABELS[goalStatus];
+    return `
+      <div class="route-step-item" data-idx="${idx}">
+        <span class="idx">${idx + 1}</span>
+        <span class="name">${escapeHtml(card.title)}
+          <small>📍 ${escapeHtml(card.zone || '未设展区')} · ⏱️ ${card.durationMinutes}分</small>
+          <small class="step-tags">
+            <span class="fam-tag" style="background:${famColor}">${FAMILIARITY_LABELS[card.familiarity]}</span>
+            ${card.stageGoal ? `<span class="step-goal" style="color:${goalColor};border-color:${goalColor}">🎯 ${goalLabel}</span>` : ''}
+            ${!card.isReviewed ? '<span class="step-flag">待复盘</span>' : ''}
+          </small>
+        </span>
+        <span class="step-btns">
+          <button data-step-action="up" title="上移">↑</button>
+          <button data-step-action="down" title="下移">↓</button>
+          <button class="del" data-step-action="remove" title="移除">✕</button>
+        </span>
+      </div>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.route-step-item').forEach((itemEl) => {
+    const idx = parseInt(itemEl.getAttribute('data-idx')!, 10);
+    itemEl.querySelector('[data-step-action="up"]')?.addEventListener('click', () => {
+      if (!editingRoute || idx <= 0) return;
+      const ids = editingRoute.stepIds;
+      [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
+      renderRouteStepList();
+    });
+    itemEl.querySelector('[data-step-action="down"]')?.addEventListener('click', () => {
+      if (!editingRoute) return;
+      const ids = editingRoute.stepIds;
+      if (idx >= ids.length - 1) return;
+      [ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]];
+      renderRouteStepList();
+    });
+    itemEl.querySelector('[data-step-action="remove"]')!.addEventListener('click', () => {
+      if (!editingRoute) return;
+      editingRoute.stepIds.splice(idx, 1);
+      renderRoutePicker();
+      renderRouteStepList();
+    });
+  });
+}
+
+function saveRouteFromForm(): void {
+  if (!editingRoute) return;
+  const name = (document.getElementById('rf-name') as HTMLInputElement).value.trim();
+  if (!name) { toast('请填写路线名称', 'error'); return; }
+  const desc = (document.getElementById('rf-description') as HTMLTextAreaElement).value.trim();
+  const dateStr = (document.getElementById('rf-target-date') as HTMLInputElement).value;
+  const archivedVal = (document.getElementById('rf-archived') as HTMLSelectElement).value;
+
+  if (!dateStr) { toast('请选择目标日期', 'error'); return; }
+
+  const now = Date.now();
+  const isNew = !routes.some((r) => r.id === editingRoute!.id);
+  editingRoute.name = name;
+  editingRoute.description = desc;
+  editingRoute.targetDate = new Date(dateStr).getTime();
+  if (archivedVal === 'yes' && !editingRoute.archivedAt) {
+    editingRoute.archivedAt = now;
+  } else if (archivedVal === 'no' && editingRoute.archivedAt) {
+    editingRoute.archivedAt = undefined;
+  }
+  editingRoute.updatedAt = now;
+
+  if (isNew) {
+    routes.push(editingRoute);
+  } else {
+    const idx = routes.findIndex((r) => r.id === editingRoute!.id);
+    if (idx >= 0) routes[idx] = editingRoute;
+  }
+
+  persist();
+  closeModal('route-editor-modal');
+  editingRoute = null;
+  render();
+  toast(isNew ? '路线已创建' : '路线已保存', 'success');
+}
+
+function toggleArchiveRoute(route: TrainingRoute): void {
+  const idx = routes.findIndex((r) => r.id === route.id);
+  if (idx < 0) return;
+  const now = Date.now();
+  if (routes[idx].archivedAt) {
+    routes[idx].archivedAt = undefined;
+    toast('已恢复路线', 'success');
+  } else {
+    routes[idx].archivedAt = now;
+    toast('路线已归档', 'info');
+  }
+  routes[idx].updatedAt = now;
+  persist();
+  render();
+}
+
+function getActiveRoute(): TrainingRoute | null {
+  if (!activeRunRouteId) return null;
+  return routes.find((r) => r.id === activeRunRouteId) || null;
+}
+
+function startRouteRunner(route: TrainingRoute): void {
+  const refs = getRouteCards(route, cards);
+  if (refs.length === 0) {
+    toast('该路线没有任何步骤，无法执行', 'warning');
+    return;
+  }
+  activeRun = startRouteRun(route.id);
+  activeRunRouteId = route.id;
+  currentStepIndex = 0;
+  document.getElementById('route-runner-title')!.textContent = `按顺序试讲：${route.name}`;
+  renderRouteRunner();
+  openModal('route-runner-modal');
+}
+
+function recordCardPractice(card: PracticeCard): void {
+  const now = Date.now();
+  card.practiceCount++;
+  card.lastPracticedAt = now;
+  card.practiceHistory = [...(card.practiceHistory || []), now];
+  card.updatedAt = now;
+}
+
+function renderRunnerGoalSection(card: PracticeCard): string {
+  const goalProgress = calculateGoalProgress(card);
+  if (!card.stageGoal || !goalProgress) return '';
+  const progressPercent = Math.round(goalProgress.overallProgress * 100);
+  const daysText = formatDaysRemaining(goalProgress.daysRemaining);
+  const statusLabel = GOAL_STATUS_LABELS[goalProgress.status];
+  const goalColor = GOAL_STATUS_COLORS[goalProgress.status];
+  return `
+    <div class="section goal-section runner-goal-section">
+      <div class="section-title">
+        🎯 阶段目标
+        <span class="goal-status-badge" style="background:${goalColor}">${statusLabel}</span>
+      </div>
+      <div class="goal-progress-bar">
+        <div class="goal-progress-fill" style="width:${progressPercent}%;background:${goalColor}"></div>
+      </div>
+      <div class="goal-meta">
+        <span class="goal-percent">${progressPercent}%</span>
+        <span class="goal-days" style="color:${goalColor}">${daysText}</span>
+      </div>
+      <div class="goal-details">
+        <span title="目标掌握度">📈 ${GOAL_FAMILIARITY_TARGET_LABELS[card.stageGoal.targetFamiliarity]}</span>
+        <span title="目标试讲次数">🎯 ${card.stageGoal.targetPracticeCount} 次（已练 ${card.practiceCount}）</span>
+        ${card.stageGoal.targetReviewDone ? `<span title="需复盘">📝 ${card.isReviewed ? '已复盘' : '待复盘'}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderRunnerCardDetail(card: PracticeCard): string {
+  return `
+    <div class="runner-card-detail">
+      <div class="runner-card-head">
+        <h3>${escapeHtml(card.title || '(未命名)')}</h3>
+        <div class="runner-card-meta">
+          ${card.zone ? `<span class="zone-tag">📍 ${escapeHtml(card.zone)}</span>` : ''}
+          <span class="duration-tag">⏱️ ${card.durationMinutes} 分钟</span>
+          <span class="fam-tag fam-${card.familiarity}" style="background:${FAMILIARITY_COLORS[card.familiarity]}">${FAMILIARITY_LABELS[card.familiarity]}</span>
+          <span>🎤 已试讲 ${card.practiceCount} 次</span>
+        </div>
+      </div>
+      ${renderRunnerGoalSection(card)}
+      ${card.keywords.length > 0 ? `
+        <div class="section">
+          <div class="section-title">🔑 关键词 (${card.keywords.length})</div>
+          <div class="tag-cloud">${card.keywords.map((k) => `<span class="tag-item">${escapeHtml(k)}</span>`).join('')}</div>
+        </div>
+      ` : ''}
+      ${card.errorPoints.length > 0 ? `
+        <div class="section">
+          <div class="section-title">⚠️ 易错点 (${card.errorPoints.length})</div>
+          <div class="tag-cloud">${card.errorPoints.map((e) => `<span class="tag-item error">${escapeHtml(e)}</span>`).join('')}</div>
+        </div>
+      ` : ''}
+      ${card.alternatives.length > 0 ? `
+        <div class="section">
+          <div class="section-title">💬 替代表达 (${card.alternatives.length})</div>
+          <div class="tag-cloud">${card.alternatives.map((a) => `<span class="tag-item alt">${escapeHtml(a)}</span>`).join('')}</div>
+        </div>
+      ` : ''}
+      ${card.reviewNote ? `
+        <div class="section">
+          <div class="section-title">📝 复盘备注</div>
+          <div class="review-note">${escapeHtml(card.reviewNote)}</div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderRouteRunner(): void {
+  const route = getActiveRoute();
+  if (!activeRun || !route) return;
+
+  const refs = getRouteCards(route, cards);
+  const totalValid = refs.filter((r) => !r.missing).length;
+  const practiced = new Set(activeRun.practicedCardIds);
+  const skipped = new Set(activeRun.skippedCardIds);
+  const totalDuration = refs
+    .filter((r) => !r.missing && r.card)
+    .reduce((sum, r) => sum + (r.card ? r.card.durationMinutes : 0), 0);
+  const handledCount = practiced.size + skipped.size;
+
+  const progressEl = document.getElementById('route-runner-progress')!;
+  const currentEl = document.getElementById('route-runner-current')!;
+  const statusEl = document.getElementById('route-runner-status')!;
+  const nextBtn = document.getElementById('btn-next-route-step') as HTMLButtonElement;
+  const skipBtn = document.getElementById('btn-skip-route-step') as HTMLButtonElement;
+  const endBtn = document.getElementById('btn-end-route-run') as HTMLButtonElement;
+  endBtn.style.display = 'inline-flex';
+  endBtn.textContent = '结束路线';
+
+  progressEl.innerHTML = `
+    <div class="runner-progress-info">
+      <span class="runner-route-name">${escapeHtml(route.name || '(未命名路线)')}</span>
+      <span class="runner-progress-text">进度 ${handledCount} / ${totalValid}${refs.length !== totalValid ? `（含 ${refs.length - totalValid} 个缺失）` : ''}</span>
+    </div>
+    <div class="runner-progress-bar">
+      <div class="runner-progress-fill" style="width:${totalValid > 0 ? (handledCount / totalValid) * 100 : 0}%"></div>
+    </div>
+    <div class="runner-progress-meta">
+      <span>⏱️ 预计总时长 ${formatDuration(totalDuration)}</span>
+      <span>✅ 已练 ${practiced.size}</span>
+      <span>⏭️ 跳过 ${skipped.size}</span>
+    </div>
+  `;
+
+  if (currentStepIndex >= refs.length) {
+    currentEl.innerHTML = `
+      <div class="runner-complete">
+        <div class="runner-complete-icon">🎉</div>
+        <h3>路线已完成</h3>
+        <p>共处理 ${handledCount} 个条目：已练 ${practiced.size}，跳过 ${skipped.size}</p>
+        <div class="form-field" style="margin-top:16px;text-align:left">
+          <label>本次执行备注</label>
+          <textarea id="rr-note" rows="3" placeholder="记录本次试讲的整体感受、问题...">${escapeHtml(activeRun.note)}</textarea>
+        </div>
+      </div>
+    `;
+    statusEl.innerHTML = '';
+    nextBtn.style.display = 'none';
+    skipBtn.style.display = 'none';
+    endBtn.textContent = '完成并保存记录';
+    endBtn.classList.add('btn-success');
+    endBtn.classList.remove('btn-outline');
+    const noteEl = document.getElementById('rr-note') as HTMLTextAreaElement | null;
+    if (noteEl) {
+      noteEl.addEventListener('input', () => {
+        if (activeRun) activeRun.note = noteEl.value;
+      });
+    }
+    return;
+  }
+
+  const ref = refs[currentStepIndex];
+  const isMissing = ref.missing;
+  const stepNumber = currentStepIndex + 1;
+  const isPracticed = practiced.has(ref.cardId);
+  const isSkipped = skipped.has(ref.cardId);
+
+  currentEl.innerHTML = isMissing
+    ? `
+      <div class="runner-missing">
+        <div class="runner-step-badge">第 ${stepNumber} / ${refs.length} 步</div>
+        <div class="runner-missing-icon">❓</div>
+        <h3>条目已不存在</h3>
+        <p>该步骤引用的讲解条目（ID: ${ref.cardId.slice(0, 10)}）已被删除，无法进行试讲。</p>
+        <p class="runner-missing-hint">请点击「跳过」继续下一条；路线结束后可使用「一键清理」移除这些失效引用。</p>
+      </div>
+    `
+    : `
+      <div class="runner-current-wrapper">
+        <div class="runner-step-badge">第 ${stepNumber} / ${refs.length} 步</div>
+        ${renderRunnerCardDetail(ref.card!)}
+      </div>
+    `;
+
+  statusEl.innerHTML = `
+    <div class="runner-step-status-row">
+      ${isPracticed ? '<span class="runner-status-chip done">✓ 已记录试讲</span>' : ''}
+      ${isSkipped ? '<span class="runner-status-chip skipped">⏭️ 已跳过</span>' : ''}
+      ${isMissing ? '<span class="runner-status-chip missing">⚠️ 条目缺失</span>' : ''}
+      ${currentStepIndex > 0 ? '<span class="runner-hint">提示：可随时点击「结束路线」提前完成并保存记录</span>' : ''}
+    </div>
+  `;
+
+  nextBtn.style.display = 'inline-flex';
+  skipBtn.style.display = 'inline-flex';
+  endBtn.textContent = '结束路线';
+  endBtn.classList.remove('btn-success');
+  endBtn.classList.add('btn-outline');
+
+  if (isMissing) {
+    nextBtn.style.display = 'none';
+    skipBtn.textContent = '跳过缺失条目 →';
+  } else if (isPracticed) {
+    nextBtn.textContent = '下一条 →';
+    skipBtn.textContent = '跳过';
+  } else {
+    nextBtn.textContent = '记录试讲并下一条 →';
+    skipBtn.textContent = '跳过';
+  }
+}
+
+function advanceToNextUnhandled(refs: ReturnType<typeof getRouteCards>, practiced: Set<string>, skipped: Set<string>): void {
+  while (currentStepIndex < refs.length) {
+    const ref = refs[currentStepIndex];
+    if (ref.missing) {
+      currentStepIndex++;
+      continue;
+    }
+    if (!practiced.has(ref.cardId) && !skipped.has(ref.cardId)) {
+      break;
+    }
+    currentStepIndex++;
+  }
+}
+
+function handleNextStep(): void {
+  const route = getActiveRoute();
+  if (!activeRun || !route) return;
+  const refs = getRouteCards(route, cards);
+  if (currentStepIndex >= refs.length) return;
+  const ref = refs[currentStepIndex];
+
+  if (ref.missing) {
+    currentStepIndex++;
+  } else {
+    const card = cards.find((c) => c.id === ref.cardId);
+    if (card) recordCardPractice(card);
+    activeRun.practicedCardIds = Array.from(new Set([...activeRun.practicedCardIds, ref.cardId]));
+    activeRun.skippedCardIds = activeRun.skippedCardIds.filter((id) => id !== ref.cardId);
+    currentStepIndex++;
+  }
+
+  const practiced = new Set(activeRun.practicedCardIds);
+  const skipped = new Set(activeRun.skippedCardIds);
+  advanceToNextUnhandled(refs, practiced, skipped);
+
+  persist();
+  render();
+  renderRouteRunner();
+}
+
+function handleSkipStep(): void {
+  const route = getActiveRoute();
+  if (!activeRun || !route) return;
+  const refs = getRouteCards(route, cards);
+  if (currentStepIndex >= refs.length) return;
+  const ref = refs[currentStepIndex];
+
+  activeRun.skippedCardIds = Array.from(new Set([...activeRun.skippedCardIds, ref.cardId]));
+  activeRun.practicedCardIds = activeRun.practicedCardIds.filter((id) => id !== ref.cardId);
+  currentStepIndex++;
+
+  const practiced = new Set(activeRun.practicedCardIds);
+  const skipped = new Set(activeRun.skippedCardIds);
+  advanceToNextUnhandled(refs, practiced, skipped);
+
+  persist();
+  render();
+  renderRouteRunner();
+}
+
+function endRouteRun(): void {
+  const route = getActiveRoute();
+  if (!activeRun || !route) return;
+  const noteEl = document.getElementById('rr-note') as HTMLTextAreaElement | null;
+  const note = noteEl ? noteEl.value.trim() : '';
+  activeRun.finishedAt = Date.now();
+  activeRun.note = note;
+  routeRuns.push(activeRun);
+
+  const idx = routes.findIndex((r) => r.id === route.id);
+  if (idx >= 0) {
+    routes[idx].lastRunAt = activeRun.finishedAt;
+    routes[idx].updatedAt = activeRun.finishedAt;
+  }
+
+  persist();
+  const practicedCount = activeRun.practicedCardIds.length;
+  const skippedCount = activeRun.skippedCardIds.length;
+  closeModal('route-runner-modal');
+  activeRun = null;
+  activeRunRouteId = null;
+  currentStepIndex = 0;
+  render();
+  toast(`路线执行已记录：已练 ${practicedCount} 个，跳过 ${skippedCount} 个`, 'success');
+}
+
+function showRouteDetail(route: TrainingRoute): void {
+  const summary = calculateRouteSummary(route, cards, routeRuns);
+  const refs = getRouteCards(route, cards);
+  const routeRunsForRoute = routeRuns
+    .filter((r) => r.routeId === route.id)
+    .sort((a, b) => b.startedAt - a.startedAt);
+
+  document.getElementById('route-detail-title')!.textContent = route.name || '(未命名路线)';
+  const content = document.getElementById('route-detail-content')!;
+
+  const avgMin = summary.averageDurationMs > 0 ? Math.round(summary.averageDurationMs / 60000) : 0;
+
+  content.innerHTML = `
+    ${route.description ? `<p style="color:var(--text-muted);font-size:13px;margin-top:0">${escapeHtml(route.description)}</p>` : ''}
+    <div class="route-detail-section">
+      <h4>基本信息</h4>
+      <div class="route-detail-meta">
+        <div><strong>目标日期</strong>${formatDate(route.targetDate)}</div>
+        <div><strong>创建时间</strong>${formatDateTime(route.createdAt)}</div>
+        <div><strong>最近修改</strong>${formatDateTime(route.updatedAt)}</div>
+        <div><strong>步骤数</strong>${summary.totalSteps}（有效 ${summary.validSteps}）</div>
+        <div><strong>预计时长</strong>${formatDuration(summary.totalDurationMinutes)}</div>
+        <div><strong>执行次数</strong>${summary.runCount}</div>
+        ${avgMin > 0 ? `<div><strong>平均耗时</strong>${avgMin} 分钟</div>` : ''}
+        ${summary.lastRunAt ? `<div><strong>最近执行</strong>${formatDateTime(summary.lastRunAt)}</div>` : ''}
+        ${route.archivedAt ? `<div><strong>归档时间</strong>${formatDateTime(route.archivedAt)}</div>` : ''}
+      </div>
+    </div>
+
+    <div class="route-detail-section">
+      <h4>步骤列表（${refs.length}）</h4>
+      <div class="route-steps-preview">
+        ${refs.map((ref, idx) => `
+          <div class="route-step-preview-item ${ref.missing ? 'missing' : ''}">
+            <span class="route-step-idx">${idx + 1}</span>
+            <span class="route-step-name">${ref.missing ? `⚠️ 缺失条目（${ref.cardId.slice(0, 10)}）` : escapeHtml(ref.card!.title) + ` <small style="color:var(--text-muted)">${escapeHtml(ref.card!.zone || '')} · ${ref.card!.durationMinutes}分钟</small>`}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    ${summary.goalSummaries.length > 0 ? `
+      <div class="route-detail-section">
+        <h4>阶段目标摘要（已达成 ${summary.achievedGoalCount} / ${summary.goalSummaries.length}）</h4>
+        <div class="route-steps-preview">
+          ${summary.goalSummaries.map((g) => `
+            <div class="route-step-preview-item" style="background:${g.status === 'achieved' ? 'var(--success-bg)' : 'var(--bg)'}">
+              <span class="route-step-idx" style="background:${GOAL_STATUS_COLORS[g.status]};color:#fff">${g.status === 'achieved' ? '✓' : '○'}</span>
+              <span class="route-step-name">${escapeHtml(g.cardTitle)} <small>${GOAL_STATUS_LABELS[g.status]} · ${Math.round(g.overallProgress * 100)}% · 截止 ${formatDate(g.dueDate)}</small></span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="route-detail-section">
+      <h4>执行记录（${routeRunsForRoute.length}）</h4>
+      ${routeRunsForRoute.length === 0 ? '<p style="color:var(--text-muted);font-size:12px">暂无执行记录</p>' :
+        routeRunsForRoute.map((run) => {
+          const durMin = run.finishedAt ? Math.round((run.finishedAt - run.startedAt) / 60000) : 0;
+          return `
+            <div class="run-history-item">
+              <div class="run-head">
+                <span>${formatDateTime(run.startedAt)}</span>
+                <span>${run.finishedAt ? `耗时 ${durMin} 分钟` : '进行中'}</span>
+              </div>
+              <div>已练 ${run.practicedCardIds.length} 个 · 跳过 ${run.skippedCardIds.length} 个</div>
+              ${run.note ? `<div class="run-note">📝 ${escapeHtml(run.note)}</div>` : ''}
+            </div>
+          `;
+        }).join('')
+      }
+    </div>
+  `;
+  openModal('route-detail-modal');
+}
+
 function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
@@ -725,21 +1567,58 @@ function bindEvents(): void {
   document.getElementById('btn-daily-plan')!.addEventListener('click', showDailyPlan);
 
   document.getElementById('btn-export-json')!.addEventListener('click', () => {
-    const list = getFilteredSortedCards();
-    if (list.length === 0) { toast('当前列表为空，无可导出内容', 'warning'); return; }
-    const content = exportToJson(list);
+    if (cards.length === 0 && routes.length === 0) { toast('暂无内容可导出', 'warning'); return; }
+    const content = exportToJson(cards, routes, routeRuns);
     const ts = new Date().toISOString().slice(0, 10);
     downloadFile(content, `展馆讲解训练台_${ts}.json`, 'application/json');
-    toast(`已导出 ${list.length} 个条目为 JSON`, 'success');
+    toast(`已导出 ${cards.length} 个条目、${routes.length} 条路线为 JSON`, 'success');
   });
 
   document.getElementById('btn-export-md')!.addEventListener('click', () => {
-    const list = getFilteredSortedCards();
-    if (list.length === 0) { toast('当前列表为空，无可导出内容', 'warning'); return; }
-    const content = exportToMarkdown(list);
+    if (cards.length === 0 && routes.length === 0) { toast('暂无内容可导出', 'warning'); return; }
+    const content = exportToMarkdown(cards, routes, routeRuns);
     const ts = new Date().toISOString().slice(0, 10);
     downloadFile(content, `展馆讲解训练台_${ts}.md`, 'text/markdown');
-    toast(`已导出 ${list.length} 个条目为 Markdown`, 'success');
+    toast(`已导出 ${cards.length} 个条目、${routes.length} 条路线为 Markdown`, 'success');
+  });
+
+  document.querySelectorAll('.view-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const view = (tab as HTMLElement).dataset.view as 'cards' | 'routes';
+      switchView(view);
+    });
+  });
+
+  document.getElementById('btn-add-route')!.addEventListener('click', () => openRouteEditor(null));
+  document.getElementById('btn-save-route')!.addEventListener('click', saveRouteFromForm);
+  document.getElementById('btn-recommend-route')!.addEventListener('click', generateTodayRoute);
+  document.getElementById('btn-quick-route')!.addEventListener('click', quickCreateZoneRoute);
+
+  document.querySelectorAll<HTMLInputElement>('input[name="rf-picker-source"]').forEach((radio) => {
+    radio.addEventListener('change', (e) => {
+      pickerSource = (e.target as HTMLInputElement).value as 'filtered' | 'all';
+      renderRoutePicker();
+    });
+  });
+  (document.getElementById('rf-picker-search') as HTMLInputElement).addEventListener('input', (e) => {
+    pickerSearch = (e.target as HTMLInputElement).value.trim();
+    renderRoutePicker();
+  });
+
+  (document.getElementById('route-sort-by') as HTMLSelectElement).addEventListener('change', (e) => {
+    routeSortBy = (e.target as HTMLSelectElement).value as RouteSortKey;
+    renderRoutes();
+  });
+  (document.getElementById('route-sort-order') as HTMLSelectElement).addEventListener('change', (e) => {
+    routeSortOrder = (e.target as HTMLSelectElement).value as 'asc' | 'desc';
+    renderRoutes();
+  });
+
+  document.getElementById('btn-next-route-step')!.addEventListener('click', handleNextStep);
+  document.getElementById('btn-skip-route-step')!.addEventListener('click', handleSkipStep);
+  document.getElementById('btn-end-route-run')!.addEventListener('click', () => {
+    if (!activeRun) return;
+    endRouteRun();
   });
 
   document.getElementById('btn-reset-filter')!.addEventListener('click', () => {
@@ -849,7 +1728,7 @@ function bindEvents(): void {
     if (e.key === 'Escape') {
       const backdrop = document.getElementById('modal-backdrop')!;
       if (backdrop.style.display === 'flex') {
-        ['card-modal', 'daily-modal', 'check-modal', 'confirm-modal'].forEach((id) => {
+        ['card-modal', 'daily-modal', 'check-modal', 'confirm-modal', 'route-editor-modal', 'route-runner-modal', 'route-detail-modal'].forEach((id) => {
           const m = document.getElementById(id);
           if (m && m.style.display === 'flex') closeModal(id);
         });
@@ -861,7 +1740,10 @@ function bindEvents(): void {
 function init(): void {
   cards = loadCards();
   selectedIds = loadSelectedIds();
+  routes = loadRoutes();
+  routeRuns = loadRouteRuns();
   bindEvents();
+  switchView('cards');
   render();
 
   const quickCheck = runChecks(cards).filter((r) => r.severity !== 'info');

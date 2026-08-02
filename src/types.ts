@@ -87,6 +87,65 @@ export interface DailyPracticePlan {
   needPracticeCount: number;
 }
 
+export interface TrainingRoute {
+  id: string;
+  name: string;
+  description: string;
+  stepIds: string[];
+  targetDate: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  lastRunAt?: number;
+}
+
+export interface RouteRunRecord {
+  id: string;
+  routeId: string;
+  startedAt: number;
+  finishedAt?: number;
+  practicedCardIds: string[];
+  skippedCardIds: string[];
+  note: string;
+}
+
+export interface RouteStepRef {
+  cardId: string;
+  card: PracticeCard | null;
+  missing: boolean;
+}
+
+export interface RouteGoalSummary {
+  cardId: string;
+  cardTitle: string;
+  zone: string;
+  targetFamiliarity: GoalFamiliarityTarget;
+  targetPracticeCount: number;
+  targetReviewDone: boolean;
+  dueDate: number;
+  status: GoalStatus;
+  overallProgress: number;
+  completedAt?: number;
+}
+
+export interface RouteSummary {
+  route: TrainingRoute;
+  totalSteps: number;
+  validSteps: number;
+  missingStepIds: string[];
+  totalDurationMinutes: number;
+  unreviewedCount: number;
+  nearDueGoalCount: number;
+  overdueGoalCount: number;
+  missingCount: number;
+  runCount: number;
+  lastRunAt?: number;
+  averageDurationMs: number;
+  goalSummaries: RouteGoalSummary[];
+  achievedGoalCount: number;
+  activeGoalCount: number;
+}
+
 export const FAMILIARITY_LABELS: Record<FamiliarityLevel, string> = {
   new: '未学习',
   learning: '学习中',
