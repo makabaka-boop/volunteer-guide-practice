@@ -1,10 +1,12 @@
-import type { PracticeCard, FilterCriteria, GoalStatus, FamiliarityLevel } from './types';
+import type { PracticeCard, FilterCriteria, GoalStatus, FamiliarityLevel, TrainingRoute, RouteRunRecord } from './types';
 import { GOAL_NEAR_DUE_DAYS } from './types';
 
 const STORAGE_KEY = 'volunteer_guide_script_segments_v2';
 const SELECTED_KEY = 'volunteer_guide_script_selected_ids_v2';
 const LEGACY_STORAGE_KEY = 'volunteer_guide_practice_cards_v1';
 const LEGACY_SELECTED_KEY = 'volunteer_guide_selected_ids_v1';
+const ROUTES_KEY = 'volunteer_guide_training_routes_v1';
+const ROUTE_RUNS_KEY = 'volunteer_guide_route_runs_v1';
 
 function getStorage(): Storage {
   return sessionStorage;
@@ -294,4 +296,65 @@ export function filterCards(cards: PracticeCard[], criteria: FilterCriteria): Pr
     }
     return true;
   });
+}
+
+export function createEmptyRoute(): TrainingRoute {
+  const now = Date.now();
+  const defaultTarget = new Date();
+  defaultTarget.setDate(defaultTarget.getDate() + 14);
+  return {
+    id: generateId(),
+    name: '',
+    description: '',
+    stepIds: [],
+    targetDate: defaultTarget.getTime(),
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+export function cloneRoute(source: TrainingRoute): TrainingRoute {
+  const now = Date.now();
+  return {
+    ...source,
+    id: generateId(),
+    name: source.name + '（副本）',
+    stepIds: [...source.stepIds],
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: undefined,
+    lastRunAt: undefined
+  };
+}
+
+export function loadRoutes(): TrainingRoute[] {
+  try {
+    const raw = getStorage().getItem(ROUTES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as TrainingRoute[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveRoutes(routes: TrainingRoute[]): void {
+  getStorage().setItem(ROUTES_KEY, JSON.stringify(routes));
+}
+
+export function loadRouteRuns(): RouteRunRecord[] {
+  try {
+    const raw = getStorage().getItem(ROUTE_RUNS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as RouteRunRecord[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveRouteRuns(runs: RouteRunRecord[]): void {
+  getStorage().setItem(ROUTE_RUNS_KEY, JSON.stringify(runs));
 }

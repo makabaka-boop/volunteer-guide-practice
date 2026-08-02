@@ -131,6 +131,51 @@ export const GOAL_FAMILIARITY_TARGET_LABELS: Record<GoalFamiliarityTarget, strin
 
 export const GOAL_NEAR_DUE_DAYS = 3;
 
+export interface TrainingRoute {
+  id: string;
+  name: string;
+  description: string;
+  stepIds: string[];
+  targetDate: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  lastRunAt?: number;
+}
+
+export interface RouteRunRecord {
+  id: string;
+  routeId: string;
+  startedAt: number;
+  finishedAt?: number;
+  practicedCardIds: string[];
+  skippedCardIds: string[];
+  note: string;
+}
+
+export type RouteSortBy = 'targetDate' | 'updatedAt' | 'stepCount';
+
+export interface RouteStepCard {
+  cardId: string;
+  card: PracticeCard | null;
+  isMissing: boolean;
+}
+
+export interface RouteSummary {
+  totalSteps: number;
+  validSteps: number;
+  missingSteps: number;
+  totalDurationMinutes: number;
+  totalRuns: number;
+  lastRunAt?: number;
+  avgPracticedCount: number;
+  unreviewedCount: number;
+  goalAchievedCount: number;
+  goalInProgressCount: number;
+  goalNearDueCount: number;
+  goalOverdueCount: number;
+}
+
 const FAMILIARITY_ORDER: FamiliarityLevel[] = ['new', 'learning', 'practicing', 'mastered'];
 export function getFamiliarityIndex(level: FamiliarityLevel): number {
   return FAMILIARITY_ORDER.indexOf(level);
