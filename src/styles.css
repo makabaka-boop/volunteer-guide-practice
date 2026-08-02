@@ -672,3 +672,258 @@ html, body {
   .header-actions { width: 100%; overflow-x: auto; }
   .cards-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== 视图切换 ===== */
+.view-tabs { display: flex; gap: 4px; background: var(--bg); padding: 4px; border-radius: 999px; border: 1px solid var(--border); }
+.view-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.view-tab:hover { color: var(--primary); }
+.view-tab.active { background: #fff; color: var(--primary); box-shadow: var(--shadow); }
+
+/* 根据视图切换显示区域 */
+.app-main[data-view="cards"] .routes-view { display: none; }
+.app-main[data-view="routes"] .sidebar-left,
+.app-main[data-view="routes"] .content-area { display: none; }
+.app-main[data-view="routes"] { grid-template-columns: 1fr; }
+.routes-view { display: flex; flex-direction: column; gap: 12px; min-width: 0; grid-column: 1 / -1; }
+
+/* ===== 路线列表 ===== */
+.routes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 14px;
+}
+.route-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+.route-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); border-color: #cbd5e1; }
+.route-card.archived { opacity: 0.7; }
+.route-card-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, #eef2ff, #ecfdf5);
+}
+.route-card-title { display: flex; align-items: center; gap: 8px; }
+.route-card-title h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route-target-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.route-desc { font-size: 12px; color: var(--text-muted); margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+.route-card-body { padding: 12px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.route-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.route-meta .badge {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.route-meta .badge.warn { background: var(--warning-bg); color: #92400e; border-color: #fde68a; }
+.route-meta .badge.danger { background: var(--danger-bg); color: var(--danger); border-color: #fecaca; }
+.route-meta .badge.ok { background: var(--success-bg); color: #065f46; border-color: #a7f3d0; }
+
+.route-steps-preview { display: flex; flex-direction: column; gap: 4px; }
+.route-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.route-step-row.missing { background: var(--danger-bg); border-color: #fecaca; color: var(--danger); }
+.route-step-idx {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary-bg);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.route-step-row.missing .route-step-idx { background: #fecaca; color: var(--danger); }
+.route-step-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route-step-detail { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+
+.route-missing-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--danger-bg);
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--danger);
+}
+.route-goal-summary {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.route-goal-summary .goal-line { margin-top: 3px; }
+
+.route-card-actions { display: flex; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.route-card-actions button {
+  flex: 1;
+  min-width: 33%;
+  background: #fff;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.route-card-actions button:hover { background: var(--bg); color: var(--primary); }
+.route-card-actions button.danger:hover { background: var(--danger-bg); color: var(--danger); }
+
+/* ===== 路线编辑器 ===== */
+.route-editor { display: flex; flex-direction: column; gap: 16px; }
+.route-editor-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.route-editor-form .col-2 { grid-column: span 2; }
+.route-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.route-picker-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.route-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.route-picker-head em { font-style: normal; color: var(--primary); }
+.mini-select, .route-pick-search {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: #fff;
+}
+.route-step-list, .route-pick-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg);
+}
+.route-step-item, .route-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.route-step-item.missing { background: var(--danger-bg); border-color: #fecaca; }
+.route-step-item .step-order {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--primary-bg); color: var(--primary);
+  font-weight: 700; font-size: 11px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.route-step-item .step-main, .route-pick-item .pick-main { flex: 1; min-width: 0; }
+.route-step-item .step-title, .route-pick-item .pick-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route-step-item .step-detail, .route-pick-item .pick-detail { font-size: 11px; color: var(--text-muted); }
+.step-move-btns { display: flex; gap: 2px; }
+.step-move-btns button, .step-remove-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  color: var(--text-muted);
+}
+.step-move-btns button:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.step-move-btns button:disabled { opacity: 0.4; cursor: not-allowed; }
+.step-remove-btn:hover { color: var(--danger); border-color: var(--danger); }
+.route-pick-item label { display: flex; align-items: center; gap: 8px; cursor: pointer; width: 100%; }
+.route-pick-item input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0; }
+.route-pick-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+/* ===== 路线演练 ===== */
+.route-run-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.route-run-progress .bar { flex: 1; height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.route-run-progress .bar-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
+.route-run-current {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  background: var(--bg);
+}
+.route-run-current.missing { background: var(--danger-bg); border-color: #fecaca; }
+.route-run-current h3 { margin: 0 0 8px; font-size: 16px; }
+.route-run-current .run-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.route-run-current .run-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.route-run-current .run-section { margin-top: 10px; }
+.route-run-current .run-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+.run-goal {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #f5f3ff, #eff6ff);
+  border: 1px solid #e0e7ff;
+}
+.run-goal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.route-run-done { text-align: center; padding: 30px 20px; }
+.route-run-done .done-icon { font-size: 48px; margin-bottom: 12px; }
+
+@media (max-width: 640px) {
+  .route-editor-form, .route-picker { grid-template-columns: 1fr; }
+  .routes-grid { grid-template-columns: 1fr; }
+}
