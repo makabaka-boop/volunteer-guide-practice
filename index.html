@@ -127,30 +127,64 @@
     </aside>
 
     <section class="content-area">
-      <div class="content-toolbar">
-        <div id="results-info" class="results-info"></div>
-        <div class="sort-area">
-          <label>排序：</label>
-          <select id="sort-by">
-            <option value="updated">最近修改</option>
-            <option value="created">创建时间</option>
-            <option value="duration">时长</option>
-            <option value="title">标题</option>
-            <option value="zone">展区</option>
-            <option value="practice">试讲次数</option>
-          </select>
-          <select id="sort-order">
-            <option value="desc">降序</option>
-            <option value="asc">升序</option>
-          </select>
+      <div class="view-tabs">
+        <button id="tab-cards" class="view-tab active">📚 讲解条目</button>
+        <button id="tab-routes" class="view-tab">🗺️ 训练路线</button>
+      </div>
+
+      <div id="cards-view">
+        <div class="content-toolbar">
+          <div id="results-info" class="results-info"></div>
+          <div class="sort-area">
+            <label>排序：</label>
+            <select id="sort-by">
+              <option value="updated">最近修改</option>
+              <option value="created">创建时间</option>
+              <option value="duration">时长</option>
+              <option value="title">标题</option>
+              <option value="zone">展区</option>
+              <option value="practice">试讲次数</option>
+            </select>
+            <select id="sort-order">
+              <option value="desc">降序</option>
+              <option value="asc">升序</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="cards-container" class="cards-grid"></div>
+        <div id="empty-state" class="empty-state" style="display: none;">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">暂无匹配的讲解条目</div>
+          <div class="empty-desc">试试调整筛选条件，或点击右上角「新建讲解条目」录入第一段讲解内容</div>
         </div>
       </div>
 
-      <div id="cards-container" class="cards-grid"></div>
-      <div id="empty-state" class="empty-state" style="display: none;">
-        <div class="empty-icon">📭</div>
-        <div class="empty-title">暂无匹配的讲解条目</div>
-        <div class="empty-desc">试试调整筛选条件，或点击右上角「新建讲解条目」录入第一段讲解内容</div>
+      <div id="routes-view" style="display: none;">
+        <div class="content-toolbar">
+          <div id="routes-info" class="results-info"></div>
+          <div class="sort-area">
+            <label>排序：</label>
+            <select id="route-sort-by">
+              <option value="updatedAt">最近修改</option>
+              <option value="targetDate">目标日期</option>
+              <option value="stepCount">条目数</option>
+            </select>
+            <select id="route-sort-order">
+              <option value="desc">降序</option>
+              <option value="asc">升序</option>
+            </select>
+            <button id="btn-recommend-route" class="btn btn-primary">✨ 生成今日重点路线</button>
+            <button id="btn-add-route" class="btn btn-success">➕ 新建路线</button>
+          </div>
+        </div>
+
+        <div id="routes-container" class="routes-list"></div>
+        <div id="routes-empty" class="empty-state" style="display: none;">
+          <div class="empty-icon">🗺️</div>
+          <div class="empty-title">暂无训练路线</div>
+          <div class="empty-desc">点击「新建路线」，把零散的讲解条目组织成一条完整的训练路线</div>
+        </div>
       </div>
     </section>
   </main>
@@ -277,6 +311,87 @@
       </div>
       <div class="modal-body">
         <div id="check-results" class="check-results"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>关闭</button>
+      </div>
+    </div>
+
+    <div id="route-modal" class="modal modal-large" style="display: none;">
+      <div class="modal-header">
+        <h2 id="route-modal-title">新建训练路线</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="route-form">
+          <div class="form-grid">
+            <div class="form-field">
+              <label>路线名称 <span class="req">*</span></label>
+              <input type="text" id="r-name" placeholder="例如：常设展厅全程讲解" />
+            </div>
+            <div class="form-field">
+              <label>目标日期</label>
+              <input type="date" id="r-target-date" />
+            </div>
+            <div class="form-field col-2">
+              <label>路线说明</label>
+              <textarea id="r-description" rows="2" placeholder="这条路线的训练目标、适用场景..."></textarea>
+            </div>
+          </div>
+          <div class="section-divider">
+            <span>🧩 路线步骤（按讲解顺序）</span>
+          </div>
+          <div class="route-steps-editor">
+            <div class="route-steps-col">
+              <div class="route-steps-col-title">已选步骤 <em id="r-step-count"></em></div>
+              <div id="r-steps" class="route-steps-list"></div>
+            </div>
+            <div class="route-steps-col">
+              <div class="route-steps-col-title">可添加条目（勾选加入路线）</div>
+              <div class="route-picker-toolbar">
+                <select id="r-picker-scope">
+                  <option value="all">全部条目</option>
+                  <option value="filtered">当前筛选结果</option>
+                </select>
+                <button type="button" id="btn-add-all-listed" class="btn btn-outline btn-small">➕ 全部加入</button>
+              </div>
+              <input type="text" id="r-step-search" class="route-step-search" placeholder="在列表中搜索标题、展区、关键词..." />
+              <div id="r-available-cards" class="route-steps-list"></div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-close>取消</button>
+        <button id="btn-save-route" class="btn btn-primary">保存路线</button>
+      </div>
+    </div>
+
+    <div id="route-run-modal" class="modal modal-medium" style="display: none;">
+      <div class="modal-header">
+        <h2 id="route-run-title">▶️ 路线演练</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="run-header" class="run-header"></div>
+        <div id="run-current" class="run-current"></div>
+      </div>
+      <div class="modal-footer run-footer">
+        <button id="btn-end-run" class="btn btn-outline">✖ 结束路线</button>
+        <div class="run-footer-actions">
+          <button id="btn-skip-step" class="btn btn-outline">↷ 跳过</button>
+          <button id="btn-practice-next" class="btn btn-success">🎯 记录试讲并下一条</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="route-runs-modal" class="modal modal-medium" style="display: none;">
+      <div class="modal-header">
+        <h2 id="route-runs-title">🕘 演练记录</h2>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="runs-list" class="runs-list"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" data-close>关闭</button>

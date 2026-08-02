@@ -102,6 +102,7 @@ export const FAMILIARITY_COLORS: Record<FamiliarityLevel, string> = {
 };
 
 export const MAX_RECOMMENDED_DURATION = 15;
+export const MAX_RECOMMENDED_ROUTE_STEPS = 8;
 export const HIGH_PRACTICE_THRESHOLD_DAYS = 3;
 export const HIGH_PRACTICE_COUNT = 5;
 
@@ -135,3 +136,52 @@ const FAMILIARITY_ORDER: FamiliarityLevel[] = ['new', 'learning', 'practicing', 
 export function getFamiliarityIndex(level: FamiliarityLevel): number {
   return FAMILIARITY_ORDER.indexOf(level);
 }
+
+export interface TrainingRoute {
+  id: string;
+  name: string;
+  description: string;
+  stepIds: string[];
+  targetDate: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  lastRunAt?: number;
+}
+
+export interface RouteRunRecord {
+  id: string;
+  routeId: string;
+  startedAt: number;
+  finishedAt?: number;
+  practicedCardIds: string[];
+  skippedCardIds: string[];
+  note: string;
+}
+
+export interface RouteStepRef {
+  cardId: string;
+  card: PracticeCard | null;
+}
+
+export interface RouteGoalSummary {
+  totalWithGoals: number;
+  achieved: number;
+  inProgress: number;
+  nearDue: number;
+  overdue: number;
+  overallProgress: number;
+}
+
+export interface RouteSummary {
+  stepCount: number;
+  missingCount: number;
+  unreviewedCount: number;
+  totalDurationMinutes: number;
+  runCount: number;
+  finishedRunCount: number;
+  lastRunAt?: number;
+  goalSummary: RouteGoalSummary;
+}
+
+export type RouteSortBy = 'targetDate' | 'updatedAt' | 'stepCount';
